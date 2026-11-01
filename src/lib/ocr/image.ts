@@ -38,29 +38,24 @@ function histogram(d: Uint8Array): Uint32Array {
   return hist;
 }
 
-export function contrastStretch(img: Gray, low = 0.02, high = 0.98): Gray {
+export function contrastStretch(img: Gray, low = 0.002, high = 0.99): Gray {
   const hist = histogram(img.d);
   const total = img.d.length;
-  const loT = total * low;
-  const hiT = total * high;
-  let acc = 0;
-  let lo = 0;
-  let hi = 255;
-  for (let i = 0; i < 256; i++) {
-    acc += hist[i];
-    if (acc >= loT) {
-      lo = i;
-      break;
+  const at = (p: number) => {
+    const target = Math.max(1, total * p);
+    let acc = 0;
+    for (let i = 0; i < 256; i++) {
+      acc += hist[i];
+      if (acc >= target) return i;
     }
-  }
-  acc = 0;
-  for (let i = 0; i < 256; i++) {
-    acc += hist[i];
-    if (acc >= hiT) {
-      hi = i;
-      break;
-    }
-  }
+    return 255;
+  };
+  const paper = at(0.5);
+  let lo = at(low);
+  const hi = at(high);
+  // Ink is often under 1% of a page. A higher black point is still paper,
+  // and stretching that paper down to 0 turns the whole scan black.
+  if (paper - lo < 40) lo = Math.max(0, paper - 40);
   if (hi <= lo + 10) return img;
   const scale = 255 / (hi - lo);
   const d = new Uint8Array(img.d.length);
@@ -236,15 +231,14 @@ export function horizontalLineEnergy(img: Gray): number {
     for (let x = 0; x < img.w; x += 2) if (img.d[row + x] <= thr) ink++;
     rows[y] = ink;
   }
-  let mean = 0;
-  for (let y = 0; y < img.h; y++) mean += rows[y];
-  mean /= img.h;
-  let v = 0;
-  for (let y = 0; y < img.h; y++) {
-    const diff = rows[y] - mean;
-    v += diff * diff;
+  // Row-to-row change, not raw variance. A smooth shade becomes a ramp
+  // after a quarter turn and used to outscore real text lines.
+  let score = 0;
+  for (let y = 1; y < img.h; y++) {
+    const diff = rows[y] - rows[y - 1];
+    score += diff * diff;
   }
-  return v / img.h;
+  return score / img.h;
 }
 
 export function rotate90(img: Gray, turns: 1 | 2 | 3): Gray {
@@ -361,12 +355,33 @@ function projectionScore(binInk: Uint8Array, w: number, h: number, deg: number):
   return v / h;
 }
 
+/** Dark strokes only. A global threshold treats a gray gradient as one big ink blob. */
+function strokeInk(img: Gray): Uint8Array {
+  const { w, h, d } = img;
+  const ink = new Uint8Array(d.length);
+  const gap = Math.max(2, Math.round(Math.min(w, h) / 180));
+  for (let y = gap; y < h - gap; y++) {
+    const row = y * w;
+    for (let x = gap; x < w - gap; x++) {
+      const v = d[row + x];
+      // Max, not min: a horizontal stroke is dark on both sides, and only
+      // the pixels above and below it are paper.
+      const paper = Math.max(
+        d[row + x - gap],
+        d[row + x + gap],
+        d[row - gap * w + x],
+        d[row + gap * w + x],
+      );
+      if (paper - v >= 24) ink[row + x] = 1;
+    }
+  }
+  return ink;
+}
+
 /** Degrees (clockwise) that straighten near-horizontal text. 0 if already straight. */
 export function detectSkew(img: Gray): number {
   const small = downscale(img, 720);
-  const thr = otsuThreshold(small.d);
-  const ink = new Uint8Array(small.d.length);
-  for (let i = 0; i < ink.length; i++) if (small.d[i] <= thr) ink[i] = 1;
+  const ink = strokeInk(small);
   const base = projectionScore(ink, small.w, small.h, 0);
   let best = 0;
   let bestScore = base;

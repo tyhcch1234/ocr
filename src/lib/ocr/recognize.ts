@@ -171,12 +171,18 @@ export async function ocrGray(
   let base = source;
 
   if (opts.autoRotate && pageLooksSideways(source)) {
+    const upright = await runOnce(worker, centerBand(source), dpi, PSM.SINGLE_BLOCK);
     const cw = rotate90(source, 1);
     const ccw = rotate90(source, 3);
     const a = await runOnce(worker, centerBand(cw), dpi, PSM.SINGLE_BLOCK);
     const b = await runOnce(worker, centerBand(ccw), dpi, PSM.SINGLE_BLOCK);
-    base = quality(a.text, a.confidence) >= quality(b.text, b.confidence) ? cw : ccw;
-    notes.push("頁面是橫放的，已轉成直向");
+    const upQ = quality(upright.text, upright.confidence);
+    const aQ = quality(a.text, a.confidence);
+    const bQ = quality(b.text, b.confidence);
+    if (Math.max(aQ, bQ) > upQ + 8) {
+      base = aQ >= bQ ? cw : ccw;
+      notes.push("頁面是橫放的，已轉成直向");
+    }
   }
 
   const primaryPrep = await prepare(base, opts);
@@ -186,7 +192,9 @@ export async function ocrGray(
   let best = await runOnce(worker, used, dpi, PSM.AUTO);
 
   if (best.confidence < 50 || best.text.replace(/\s/g, "").length < 4) {
-    const altPrep = await prepare(base, {
+    // Keep the deskew already applied. Turning it off again compares a
+    // straightened page with the original skew, which is a different question.
+    const altPrep = await prepare(used, {
       deskew: false,
       binarize: binarized ? "off" : "on",
     });

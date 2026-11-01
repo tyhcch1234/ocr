@@ -3,7 +3,7 @@
  * prepared 300 DPI pass, on the skewed Traditional Chinese invoice.
  *
  * Node's WASM SIMD build aborts on some CPUs, so this forces the plain LSTM
- * core. The browser app uses its own feature detection and is unaffected.
+ * core. The browser app serves that same LSTM build from /tesseract.
  */
 import fs from "node:fs";
 import path from "node:path";

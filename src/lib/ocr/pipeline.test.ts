@@ -7,6 +7,7 @@ import {
   detectSkew,
   encodeGrayPng,
   horizontalLineEnergy,
+  pageLooksSideways,
   preparePage,
   rgbaToGray,
   rotate90,
@@ -65,6 +66,24 @@ test("a sideways page is detected after a quarter turn", () => {
   const uprightEnergy = horizontalLineEnergy(img);
   const sideEnergy = horizontalLineEnergy(side);
   assert.ok(uprightEnergy > sideEnergy * 1.25);
+  assert.equal(pageLooksSideways(side), true);
+  assert.equal(pageLooksSideways(img), false);
+});
+
+test("a left-to-right shade does not look like a sideways page", () => {
+  const img = blank(240, 360, 230);
+  for (let y = 0; y < img.h; y++) {
+    for (let x = 0; x < img.w; x++) img.d[y * img.w + x] = 230 - Math.round((40 * x) / img.w);
+  }
+  for (let y = 40; y < 200; y += 28) fillRect(img, 24, y, 180, 3, 20);
+  assert.equal(pageLooksSideways(img), false);
+  assert.equal(pageLooksSideways(rotate90(img, 1)), true);
+});
+
+test("the invoice scan is portrait, not a sideways page", () => {
+  const decoded = PNG.sync.read(fs.readFileSync("public/samples/invoice-skew.png"));
+  const full = rgbaToGray(decoded.data, decoded.width, decoded.height);
+  assert.equal(pageLooksSideways(full), false);
 });
 
 test("grayscale png round-trips", () => {
@@ -110,7 +129,14 @@ test("the skewed invoice sample is straightened and kept as grayscale", () => {
   for (let y = 0; y < h; y++) d.set(full.d.subarray(y * full.w, y * full.w + full.w), y * full.w);
   const out = preparePage({ w: full.w, h, d }, { deskew: true, binarize: "auto" });
   assert.equal(out.binarized, false);
+  let tone = 0;
+  for (let i = 0; i < out.gray.d.length; i += 29) tone += out.gray.d[i];
+  const mean = tone / Math.ceil(out.gray.d.length / 29);
+  assert.ok(mean > 140, `page went dark (${mean.toFixed(0)})`);
   assert.ok(Math.abs(out.angle) > 1 && Math.abs(out.angle) < 5, `angle ${out.angle}`);
+  // The empty gray bottom used to pull the estimate to the ±7° search limit.
+  const fullAngle = detectSkew(full);
+  assert.ok(Math.abs(fullAngle) > 1 && Math.abs(fullAngle) < 5, `full angle ${fullAngle}`);
 });
 
 test("auto mode binarizes faint type", () => {

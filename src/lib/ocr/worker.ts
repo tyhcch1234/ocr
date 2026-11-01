@@ -35,13 +35,32 @@ function describe(status: string): string {
   return "正在辨識文字";
 }
 
+/** Absolute URL so the blob worker can importScripts it. Undefined during SSR. */
+function sameOrigin(path: string): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  return new URL(path, window.location.href).href;
+}
+
 async function spawn(lang: string, quality: ModelQuality): Promise<TessWorker> {
   const { createWorker } = await import("tesseract.js");
+  // Browsers that advertise SIMD still abort the SIMD build on DotProductSSE
+  // (SwiftShader and some headless Chromes). The plain LSTM core is slower
+  // and actually finishes.
+  const workerPath = sameOrigin("/tesseract/worker.min.js");
+  const corePath = sameOrigin("/tesseract/tesseract-core-lstm.wasm.js");
   return (await createWorker(lang, 1, {
     langPath: LANG_PATH[quality],
     gzip: true,
+    ...(workerPath ? { workerPath } : {}),
+    ...(corePath ? { corePath } : {}),
     logger: (m) => {
       onStatus(describe(m.status || ""), m.progress || 0);
+    },
+    errorHandler: (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error ?? "");
+      if (/Aborted|DotProductSSE|RuntimeError/i.test(message)) {
+        onStatus("辨識引擎無法在這個瀏覽器啟動", 0);
+      }
     },
   })) as unknown as TessWorker;
 }
