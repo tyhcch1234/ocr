@@ -107,6 +107,45 @@ def build_digital(path: Path) -> None:
     pdf.output(path)
 
 
+def build_layout(path: Path) -> None:
+    from fpdf import FPDF
+
+    pdf = FPDF(unit="pt", format="A4")
+    pdf.add_page()
+    pdf.add_font("cjk", "", DIGITAL_FONT)
+    pdf.set_font("cjk", size=20)
+    pdf.set_xy(56, 46)
+    pdf.cell(0, 28, "季度報告")
+    pdf.set_draw_color(20, 20, 20)
+    pdf.set_line_width(1.4)
+    pdf.line(56, 82, 540, 82)
+    data = [
+        ["項目", "數量", "金額"],
+        ["專業服務", "2", "800"],
+        ["印刷", "10", "480"],
+    ]
+    x0, y0, cw, rh = 56, 108, 150, 28
+    for r, row in enumerate(data):
+        for c, val in enumerate(row):
+            pdf.rect(x0 + c * cw, y0 + r * rh, cw, rh)
+            pdf.set_font("Helvetica" if val.isascii() else "cjk", size=12)
+            pdf.set_xy(x0 + c * cw + 8, y0 + r * rh + 6)
+            pdf.cell(cw - 12, 16, val)
+    pdf.set_font("Helvetica", size=16)
+    pdf.set_xy(56, 220)
+    pdf.cell(0, 22, "E = mc^2")
+    pdf.set_fill_color(25, 25, 25)
+    base = 430
+    for i, height in enumerate((70, 120, 50)):
+        pdf.rect(80 + i * 78, base - height, 42, height, style="F")
+    pdf.set_line_width(1.2)
+    pdf.line(64, base, 320, base)
+    pdf.set_font("cjk", size=12)
+    pdf.set_xy(56, 446)
+    pdf.cell(0, 18, "銷售圖")
+    pdf.output(path)
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     scan = build_scan()
@@ -117,6 +156,7 @@ def main() -> None:
     scan.save(buf, format="JPEG", quality=82)
     (OUT / "invoice.pdf").write_bytes(jpeg_pdf(buf.getvalue(), scan.width, scan.height, 595.28, 841.89))
     build_digital(OUT / "digital.pdf")
+    build_layout(OUT / "layout.pdf")
     print("wrote", OUT)
 
 

@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { LayoutSheet } from "@/components/layout-sheet";
 import { pagesToDocx, pagesToTxt } from "@/lib/docx";
 import { publicPath } from "@/lib/public-path";
 import {
@@ -180,7 +181,7 @@ export function Studio() {
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
             網上版原本把頁面放大兩倍就送進 Tesseract，大約只有 144 DPI，也不處理歪斜和灰底。
-            這裡改成約 300 DPI，並先拉直、拉對比，再辨識繁體中文與英文。檔案不會上傳。
+            這裡改成約 300 DPI，並保留表格、橫線、圖表和算式的位置。檔案不會上傳。
           </p>
         </div>
         <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-primary font-heading text-xl text-primary-foreground">
@@ -244,6 +245,15 @@ export function Studio() {
                   }
                 >
                   載入數位文字範例
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() =>
+                    loadSample(publicPath("/samples/layout.pdf"), "layout.pdf").catch((error: Error) => setStatus(error.message))
+                  }
+                >
+                  載入表格圖表範例
                 </Button>
               </div>
               {queue.length > 0 && (
@@ -403,6 +413,7 @@ export function Studio() {
                 <ul className="flex flex-col gap-2 text-sm leading-6 text-muted-foreground">
                   <li>掃描頁以約 300 DPI 送進辨識，長邊最高 2800 像素，並告訴引擎實際 DPI。</li>
                   <li>歪斜的頁面會先轉正。清楚的黑字保留灰階；對比太低或陰影很重時才做局部二值化。</li>
+                  <li>表格和橫線會重組成可以複製的表格。圖表和算式保留原頁上的樣子，嵌進同一份版面。</li>
                   <li>信心太低的雜點會丟掉，中文之間被硬插進去的空格會收掉。雙欄會先讀左欄。</li>
                   <li>數位 PDF 若已有文字層，自動模式會直接用原文，不再重認一次。</li>
                 </ul>
@@ -426,7 +437,10 @@ export function Studio() {
                     <Button
                       type="button"
                       onClick={async () => {
-                        const blob = await pagesToDocx(baseName(doc.name), doc.pages.map((page) => page.text));
+                        const blob = await pagesToDocx(
+                          baseName(doc.name),
+                          doc.pages.map((page) => ({ text: page.text, layout: page.layout })),
+                        );
                         download(blob, `${baseName(doc.name)}.docx`);
                       }}
                     >
@@ -466,6 +480,7 @@ export function Studio() {
                         </div>
                       </div>
                       <div className="flex min-w-0 flex-col gap-2">
+                        <LayoutSheet blocks={page.layout} />
                         <Textarea
                           value={page.text}
                           onChange={(event) => updatePage(doc.id, page.index, event.target.value)}

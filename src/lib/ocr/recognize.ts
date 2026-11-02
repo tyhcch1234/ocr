@@ -44,6 +44,8 @@ export type PageOcr = {
   notes: string[];
   /** Small grayscale image of what was actually recognized. */
   preview: Gray;
+  /** Full page that was recognized. Layout crops charts and formulas from it. */
+  image: Gray;
   doubtful: string[];
 };
 
@@ -232,6 +234,7 @@ export async function ocrGray(
     angle: primaryPrep.angle,
     notes,
     preview: downscale(used, 720),
+    image: used,
     doubtful: doubtfulWords(best.words),
   };
 }

@@ -15,7 +15,8 @@ import {
   sauvola,
   type Gray,
 } from "./image.ts";
-import { groupLines, normalizeLine, readingOrder } from "./reconstruct.ts";
+import { composeLayout, looksLikeMath } from "./layout.ts";
+import { groupLines, normalizeLine, readingOrder, type OcrLine } from "./reconstruct.ts";
 
 function blank(w: number, h: number, value = 255): Gray {
   const d = new Uint8Array(w * h);
@@ -156,6 +157,57 @@ test("words on one baseline become a single line", () => {
   assert.equal(lines.length, 2);
   assert.equal(lines[0].text, "香港 INV-1");
   assert.equal(lines[1].text, "合計");
+});
+
+function wordLine(words: { text: string; x: number }[], y: number): OcrLine {
+  const built = words.map((w) => ({ text: w.text, conf: 90, x0: w.x, y0: y, x1: w.x + 36, y1: y + 16 }));
+  return {
+    text: built.map((w) => w.text).join(" "),
+    conf: 90,
+    bbox: [built[0].x0, y, built[built.length - 1].x1, y + 16],
+    words: built,
+  };
+}
+
+test("a ruled grid becomes a table and a bar stays a chart", () => {
+  const img = blank(420, 320);
+  fillRect(img, 20, 28, 380, 2, 0);
+  for (const y of [70, 100, 130]) fillRect(img, 30, y, 270, 2, 0);
+  for (const x of [30, 120, 210, 300]) fillRect(img, x, 70, 2, 62, 0);
+  fillRect(img, 40, 200, 36, 70, 0);
+  fillRect(img, 100, 180, 36, 90, 0);
+  const lines = [
+    wordLine([{ text: "季度", x: 24 }], 8),
+    wordLine(
+      [
+        { text: "項目", x: 40 },
+        { text: "數量", x: 140 },
+        { text: "金額", x: 230 },
+      ],
+      78,
+    ),
+    wordLine(
+      [
+        { text: "服務", x: 40 },
+        { text: "2", x: 140 },
+        { text: "800", x: 230 },
+      ],
+      108,
+    ),
+    wordLine([{ text: "E = mc^2", x: 30 }], 160),
+  ];
+  const pieces = composeLayout(lines, img);
+  const table = pieces.find((p) => p.kind === "table");
+  assert.ok(table && table.kind === "table");
+  if (table?.kind === "table") {
+    assert.deepEqual(table.rows[0], ["項目", "數量", "金額"]);
+    assert.deepEqual(table.rows[1], ["服務", "2", "800"]);
+  }
+  assert.ok(pieces.some((p) => p.kind === "rule"));
+  assert.ok(pieces.some((p) => p.kind === "image" && p.role === "graph"));
+  assert.ok(pieces.some((p) => p.kind === "image" && p.role === "equation" && p.text.includes("mc^2")));
+  assert.equal(looksLikeMath("E = mc^2"), true);
+  assert.equal(looksLikeMath("客戶名稱 陳大文"), false);
 });
 
 test("two columns are read left then right", () => {

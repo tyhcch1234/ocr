@@ -1,6 +1,7 @@
 import type { PDFPageProxy } from "pdfjs-dist";
 import { downscale, encodeGrayPng, rgbaToGray, type Gray } from "./image";
-import { assemblePdfText, type PdfGlyph } from "./pdf-text";
+import { composeLayout, layoutNotes, presentLayout, type PageLayoutBlock } from "./layout";
+import { assemblePdfText, glyphsToLines, type PdfGlyph } from "./pdf-text";
 import { ocrGray, type OcrTune } from "./recognize";
 import { prepareOffThread } from "./prepare-client";
 import { publicPath } from "../public-path";
@@ -23,6 +24,7 @@ export type PageResult = {
   notes: string[];
   doubtful: string[];
   previewUrl: string | null;
+  layout: PageLayoutBlock[];
 };
 
 export type ConvertProgress = {
@@ -117,18 +119,24 @@ export async function convertPdf(
         (settings.mode === "auto" && extracted.chars < TEXT_ENOUGH);
 
       if (!useOcr) {
-        const thumb = await renderGray(page, Math.min(1, 900 / Math.max(viewport.width, viewport.height)));
+        const plan = renderPlan(viewport.width, viewport.height, 140);
+        const gray = await renderGray(page, plan.scale);
+        const lines = glyphsToLines(glyphs, plan.scale);
+        const pieces = composeLayout(lines, gray);
+        const layout = presentLayout(pieces, gray.w);
+        const note = layoutNotes(layout);
         pages.push({
           index: i,
           text: extracted.text,
           confidence: null,
           source: "text",
-          notes:
-            settings.mode === "never"
-              ? ["依設定略過 OCR，只用 PDF 內的文字層"]
-              : ["這一頁已有文字層，直接採用，不再辨識"],
+          notes: [
+            settings.mode === "never" ? "依設定略過 OCR，只用 PDF 內的文字層" : "這一頁已有文字層，直接採用，不再辨識",
+            ...(note ? [note] : []),
+          ],
           doubtful: [],
-          previewUrl: grayUrl(thumb),
+          previewUrl: grayUrl(gray),
+          layout,
         });
         page.cleanup();
         continue;
@@ -153,7 +161,11 @@ export async function convertPdf(
       const worker = await getOcrWorker(settings.lang, settings.quality);
       throwIfAborted();
       const recognized = await ocrGray(worker, gray, plan.dpi, settings, prepareOffThread);
+      const layoutPieces = composeLayout(recognized.lines, recognized.image);
+      const layout = presentLayout(layoutPieces, recognized.image.w);
       const notes = [...recognized.notes];
+      const layoutNote = layoutNotes(layout);
+      if (layoutNote) notes.push(layoutNote);
       if (!recognized.text.trim()) notes.push("這一頁沒有辨識出文字");
       pages.push({
         index: i,
@@ -163,6 +175,7 @@ export async function convertPdf(
         notes,
         doubtful: recognized.doubtful,
         previewUrl: grayUrl(recognized.preview),
+        layout,
       });
       page.cleanup();
     }
