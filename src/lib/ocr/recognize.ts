@@ -131,7 +131,7 @@ async function runOnce(worker: RecognizeEngine, img: Gray, dpi: number, psm: str
   });
   const res = await worker.recognize(imageInput(img), {}, { text: true, blocks: true });
   const words = usefulWords(collectWords(res.data.blocks));
-  const lines = groupLines(words);
+  const lines = groupLines(words, img.w);
   const text = lines.length ? linesToText(lines) : fallbackText(res.data.text);
   const confidence = lines.length ? meanConfidence(lines) : res.data.confidence || 0;
   return { lines, text, confidence, words };

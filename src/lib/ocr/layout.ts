@@ -27,8 +27,16 @@ const MATH = /[=≈≠≤≥≡+\-−×÷∑∫√^±∞π]/;
 export function looksLikeMath(text: string): boolean {
   const compact = text.replace(/\s/g, "");
   if (compact.length < 3 || !MATH.test(compact)) return false;
+  const prose = text.split(/\s+/).filter((word) => /^[A-Za-z]{4,}$/.test(word)).length;
+  if (prose >= 3) return false;
+  const longGroups = compact.match(/[A-Za-z]{3,}/g)?.length ?? 0;
+  if (longGroups >= 2) return false;
   const symbols = compact.match(/[=≈≠≤≥≡+\-−×÷∑∫√^±∞π\d]/g)?.length ?? 0;
-  return symbols / compact.length >= 0.45 && /[=≈≠≤≥≡]/.test(compact);
+  if (/[=≈≠≤≥≡]/.test(compact) && symbols / compact.length >= 0.45) return true;
+  const letters = compact.match(/[A-Za-z]/g)?.length ?? 0;
+  const digits = compact.match(/\d/g)?.length ?? 0;
+  const ops = compact.match(/[+\-−×÷^?=]/g)?.length ?? 0;
+  return letters >= 2 && digits >= 1 && ops >= 1 && prose <= 1;
 }
 
 function median(img: Gray): number {
@@ -59,7 +67,7 @@ function mapBox(box: BBox, from: Gray, toW: number, toH: number): BBox {
 
 /** Thin, long strokes. A solid bar is one thick band and is left for the chart crop. */
 export function detectRules(img: Gray): { horizontal: Seg[]; vertical: Seg[] } {
-  const small = downscale(img, 720);
+  const small = downscale(img, 1600);
   const mask = darkMask(small);
   const maxThick = Math.max(4, Math.round(Math.min(small.w, small.h) * 0.012));
   const minH = Math.max(8, small.w * 0.18);
@@ -74,10 +82,63 @@ export function detectRules(img: Gray): { horizontal: Seg[]; vertical: Seg[] } {
     y0: seg.y0 * sy,
     y1: seg.y1 * sy,
   });
+  const solid = mergeCollinear(horizontal.map(scale), "h", Math.max(4, img.h * 0.008));
+  const dashed = dashedHorizontal(img);
   return {
-    horizontal: mergeCollinear(horizontal.map(scale), "h", Math.max(4, img.h * 0.008)),
+    horizontal: mergeCollinear(solid.concat(dashed), "h", Math.max(6, img.h * 0.006)),
     vertical: mergeCollinear(vertical.map(scale), "v", Math.max(4, img.w * 0.008)),
   };
+}
+
+/** Answer lines are dotted, so a solid-run detector never sees them. */
+function dashedHorizontal(img: Gray): Seg[] {
+  const paper = median(img);
+  const limit = Math.min(200, paper - 16);
+  const minLen = Math.max(24, img.w * 0.22);
+  const maxGap = Math.max(10, Math.round(img.w * 0.008));
+  const spans: { y: number; x0: number; x1: number }[] = [];
+  for (let y = 0; y < img.h; y++) {
+    const row = y * img.w;
+    let best = 0;
+    let x0 = 0;
+    let x1 = 0;
+    let runStart = -1;
+    let lastOn = -1;
+    const close = (end: number) => {
+      if (runStart < 0 || end - runStart <= best) return;
+      best = end - runStart;
+      x0 = runStart;
+      x1 = end;
+    };
+    for (let x = 0; x < img.w; x++) {
+      if (img.d[row + x] <= limit) {
+        if (runStart < 0 || (lastOn >= 0 && x - lastOn - 1 > maxGap)) {
+          close(lastOn + 1);
+          runStart = x;
+        }
+        lastOn = x;
+      }
+    }
+    close(lastOn + 1);
+    if (best >= minLen) spans.push({ y, x0, x1 });
+  }
+  const out: Seg[] = [];
+  let i = 0;
+  while (i < spans.length) {
+    let j = i;
+    while (j + 1 < spans.length && spans[j + 1].y <= spans[j].y + 2 && overlap(spans[i].x0, spans[i].x1, spans[j + 1].x0, spans[j + 1].x1) > 0.6) j++;
+    const thickness = spans[j].y - spans[i].y + 1;
+    if (thickness <= Math.max(5, img.h * 0.004)) {
+      out.push({
+        x0: Math.min(...spans.slice(i, j + 1).map((s) => s.x0)),
+        x1: Math.max(...spans.slice(i, j + 1).map((s) => s.x1)),
+        y0: spans[i].y,
+        y1: spans[j].y + 1,
+      });
+    }
+    i = j + 1;
+  }
+  return out;
 }
 
 function thinBands(mask: Uint8Array, w: number, h: number, axis: "h" | "v", minLen: number, maxThick: number): Seg[] {
@@ -249,7 +310,7 @@ function tablesFromRules(lines: OcrLine[], rules: { horizontal: Seg[]; vertical:
   const tables: { rows: string[][]; bbox: BBox; used: Set<number> }[] = [];
   const claimed = new Set<number>();
   for (const group of groups.values()) {
-    if (group.h.length < 2 || group.v.length < 2) continue;
+    if (group.h.length < 2 || group.v.length < 3) continue;
     const built = gridFromLines(lines, group.h, group.v, claimed);
     if (built) tables.push(built);
   }
@@ -313,7 +374,8 @@ function whitespaceTable(lines: OcrLine[], pageW: number): { rows: string[][]; b
       const aligned = next.cells.every((cell, k) => Math.abs(cell.x0 - prev.cells[k].x0) <= tol);
       const gap = next.bbox[1] - prev.bbox[3];
       const height = Math.max(8, prev.bbox[3] - prev.bbox[1]);
-      if (!aligned || gap > height * 1.8) break;
+      const adjacent = next.cells.every((cell, k) => k === 0 || cell.x0 - next.cells[k - 1].x0 <= pageW * 0.55);
+      if (!aligned || gap > height * 1.8 || !adjacent) break;
       group.push(next);
     }
     if (group.length >= 3 && (!best || group.length > best.length)) best = group;
@@ -418,6 +480,48 @@ function findPictures(img: Gray, occupied: BBox[], lineH: number): { bbox: BBox;
   return pictures;
 }
 
+function fitInk(img: Gray, box: BBox): BBox {
+  const dark = (x: number, y: number) => x >= 0 && y >= 0 && x < img.w && y < img.h && img.d[y * img.w + x] < 150;
+  let x0 = Math.max(0, Math.floor(box[0]));
+  let y0 = Math.max(0, Math.floor(box[1]));
+  let x1 = Math.min(img.w, Math.ceil(box[2]));
+  let y1 = Math.min(img.h, Math.ceil(box[3]));
+  const column = (x: number, top: number, bottom: number) => {
+    for (let y = top; y < bottom; y++) if (dark(x, y)) return true;
+    return false;
+  };
+  const grow = (dir: -1 | 1) => {
+    let gap = 0;
+    let x = dir < 0 ? x0 - 1 : x1;
+    const limit = dir < 0 ? Math.max(0, x0 - Math.round(img.w * 0.35)) : Math.min(img.w, x1 + Math.round(img.w * 0.35));
+    while (dir < 0 ? x >= limit : x < limit) {
+      if (column(x, y0, y1)) {
+        if (dir < 0) x0 = x;
+        else x1 = x + 1;
+        gap = 0;
+      } else if (++gap > 28) break;
+      x += dir;
+    }
+  };
+  grow(-1);
+  grow(1);
+  for (let i = 0; i < 10; i++) {
+    if (y0 <= 0 || !column(Math.floor((x0 + x1) / 2), y0 - 1, y0)) break;
+    let hit = false;
+    for (let x = x0; x < x1; x += 2) if (dark(x, y0 - 1)) hit = true;
+    if (!hit) break;
+    y0--;
+  }
+  for (let i = 0; i < 8; i++) {
+    if (y1 >= img.h) break;
+    let hit = false;
+    for (let x = x0; x < x1; x += 2) if (dark(x, y1)) hit = true;
+    if (!hit) break;
+    y1++;
+  }
+  return [x0, y0, x1, y1];
+}
+
 function pngOf(img: Gray, bbox: BBox, pad: number): Uint8Array {
   const x0 = Math.max(0, Math.floor(bbox[0] - pad));
   const y0 = Math.max(0, Math.floor(bbox[1] - pad));
@@ -451,13 +555,14 @@ export function composeLayout(lines: OcrLine[], image: Gray | null): LayoutPiece
   for (let i = 0; i < lines.length; i++) {
     if (consumed.has(i) || !looksLikeMath(lines[i].text)) continue;
     consumed.add(i);
-    const bbox = lines[i].bbox;
+    const bbox = image ? fitInk(image, lines[i].bbox) : lines[i].bbox;
+    const noisy = lines[i].conf < 70 || /[?®�]/.test(lines[i].text) || /[A-Za-z]\d|\d[A-Za-z]/.test(lines[i].text.replace(/\s/g, ""));
     pieces.push({
       kind: "image",
       role: "equation",
-      text: lines[i].text,
+      text: noisy ? "" : lines[i].text,
       bbox,
-      png: image ? pngOf(image, bbox, 6) : new Uint8Array(),
+      png: image ? pngOf(image, bbox, 8) : new Uint8Array(),
     });
   }
 
@@ -483,6 +588,12 @@ export function composeLayout(lines: OcrLine[], image: Gray | null): LayoutPiece
       const bbox: BBox = [rule.x0, rule.y0, rule.x1, rule.y1];
       const length = bbox[2] - bbox[0];
       if (length < pageW * 0.28) continue;
+      const cy = (bbox[1] + bbox[3]) / 2;
+      const throughText = pieces.some((piece) => {
+        if (piece.kind !== "text" && piece.kind !== "image" && piece.kind !== "table") return false;
+        return cy > piece.bbox[1] + 1 && cy < piece.bbox[3] - 1 && overlap(bbox[0], bbox[2], piece.bbox[0], piece.bbox[2]) > 0.35;
+      });
+      if (throughText) continue;
       if (pieces.some((p) => (p.kind === "table" || p.kind === "image") && intersects(bbox, p.bbox, 3))) continue;
       pieces.push({ kind: "rule", bbox });
     }

@@ -43,11 +43,18 @@ export function normalizeLine(text: string): string {
   return s;
 }
 
+function keepMathToken(text: string): boolean {
+  const compact = text.replace(/\s/g, "");
+  if (compact.length < 3) return false;
+  return /[A-Za-z]/.test(compact) && (/\d/.test(compact) || /[+\-−×÷=^]/.test(compact));
+}
+
 export function usefulWords(words: OcrWord[]): OcrWord[] {
-  return words.filter((w) => {
+  const kept = words.filter((w) => {
     const t = w.text.replace(/\s/g, "");
     if (!t) return false;
     if (!(w.conf >= 0)) return false;
+    if (keepMathToken(t)) return true;
     const cjk = CJK.test(t);
     if (/^[\s\W_]+$/.test(t) && w.conf < 78) return false;
     if (w.conf < 28) return false;
@@ -55,33 +62,103 @@ export function usefulWords(words: OcrWord[]): OcrWord[] {
     if (!cjk && w.conf < 38 && t.length <= 2) return false;
     return true;
   });
+  const math = kept.filter((w) => keepMathToken(w.text));
+  for (const w of words) {
+    if (kept.includes(w)) continue;
+    const t = w.text.trim();
+    if (!t || t.length > 6) continue;
+    const label = math.some((item) => {
+      const dy = Math.abs((item.y0 + item.y1) / 2 - (w.y0 + w.y1) / 2);
+      return dy < 24 && w.x1 <= item.x0 + 8 && item.x0 - w.x1 < 90;
+    });
+    if (label) kept.push(w);
+  }
+  return kept;
 }
 
-export function groupLines(words: OcrWord[]): OcrLine[] {
+function verticalMarginWord(word: OcrWord, pageW: number): boolean {
+  const width = word.x1 - word.x0;
+  const height = word.y1 - word.y0;
+  const cx = (word.x0 + word.x1) / 2;
+  const onEdge = cx < pageW * 0.115 || cx > pageW * 0.885;
+  if (!onEdge || width > 56 || width < 6) return false;
+  const tall = height >= 24 && height > width * 1.05;
+  return tall || width < 42;
+}
+
+function orientMargin(words: OcrWord[]): string {
+  const sorted = words.slice().sort((a, b) => (a.y0 + a.y1) / 2 - (b.y0 + b.y1) / 2);
+  const down = sorted.map((w) => w.text.trim());
+  const up = down.slice().reverse();
+  const score = (row: string[]) => {
+    const first = row[0] ?? "";
+    const last = row[row.length - 1] ?? "";
+    let value = 0;
+    if (/^[A-Z]/.test(first)) value += 2;
+    if (/[.?!。]$/.test(last)) value += 2;
+    if (/[.?!。]$/.test(first)) value -= 2;
+    if (/^[A-Z]/.test(last) && !/[.?!。]$/.test(last)) value -= 1;
+    return value;
+  };
+  return normalizeLine((score(up) > score(down) ? up : down).join(" "));
+}
+
+function peelMarginNotes(words: OcrWord[], pageW: number): { body: OcrWord[]; notes: string[] } {
+  const left: OcrWord[] = [];
+  const right: OcrWord[] = [];
+  const body: OcrWord[] = [];
+  for (const word of words) {
+    if (!verticalMarginWord(word, pageW)) {
+      body.push(word);
+      continue;
+    }
+    const cx = (word.x0 + word.x1) / 2;
+    (cx < pageW / 2 ? left : right).push(word);
+  }
+  const notes: string[] = [];
+  const seen = new Set<string>();
+  for (const side of [left, right]) {
+    if (side.length < 4) {
+      body.push(...side);
+      continue;
+    }
+    const text = orientMargin(side);
+    const key = text.toLowerCase().replace(/[^a-z0-9\u3400-\u9fff]+/g, "");
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    notes.push(text);
+  }
+  return { body, notes };
+}
+
+export function groupLines(words: OcrWord[], pageW?: number): OcrLine[] {
   if (!words.length) return [];
-  const items = words.map((w) => ({
+  const width = pageW && pageW > 0 ? pageW : Math.max(...words.map((w) => w.x1));
+  const peeled = peelMarginNotes(words, width);
+  const items = peeled.body.map((w) => ({
     ...w,
     text: w.text.trim(),
     h: Math.max(1, w.y1 - w.y0),
   }));
   items.sort((a, b) => (a.y0 + a.y1) / 2 - (b.y0 + b.y1) / 2 || a.x0 - b.x0);
 
-  type Line = { items: typeof items; y0: number; y1: number };
-  const lines: Line[] = [];
+  type Bucket = { items: typeof items; y0: number; y1: number };
+  const buckets: Bucket[] = [];
   for (const it of items) {
-    let best: Line | null = null;
+    let best: Bucket | null = null;
     let bestOverlap = 0;
-    const start = Math.max(0, lines.length - 5);
-    for (let i = lines.length - 1; i >= start; i--) {
-      const line = lines[i];
+    const start = Math.max(0, buckets.length - 5);
+    for (let i = buckets.length - 1; i >= start; i--) {
+      const line = buckets[i];
       const overlap = Math.min(line.y1, it.y1) - Math.max(line.y0, it.y0);
       const minH = Math.min(Math.max(1, line.y1 - line.y0), it.h);
-      if (overlap > minH * 0.45 && overlap > bestOverlap) {
+      const tall = it.h > Math.max(it.x1 - it.x0, 1) * 1.2 && it.h > minH * 1.7;
+      if (!tall && overlap > minH * 0.45 && overlap > bestOverlap) {
         best = line;
         bestOverlap = overlap;
       }
     }
-    if (!best) lines.push({ items: [it], y0: it.y0, y1: it.y1 });
+    if (!best) buckets.push({ items: [it], y0: it.y0, y1: it.y1 });
     else {
       best.items.push(it);
       best.y0 = Math.min(best.y0, it.y0);
@@ -89,16 +166,28 @@ export function groupLines(words: OcrWord[]): OcrLine[] {
     }
   }
 
-  const built = lines.map((line) => {
+  const built = buckets.flatMap((line) => {
     const sorted = line.items.slice().sort((a, b) => a.x0 - b.x0);
+    const segments: (typeof sorted)[] = [];
+    for (const word of sorted) {
+      const prev = segments[segments.length - 1]?.at(-1);
+      const gap = prev ? word.x0 - prev.x1 : 0;
+      const h = Math.max(word.h, prev?.h ?? 0, 8);
+      const split = prev && !isMostlyCjk(prev.text) && !isMostlyCjk(word.text) && gap > Math.max(h * 2.4, width * 0.04);
+      if (!segments.length || split) segments.push([word]);
+      else segments[segments.length - 1].push(word);
+    }
+    const lineY0 = Math.min(...sorted.map((w) => w.y0));
+    const lineY1 = Math.max(...sorted.map((w) => w.y1));
+    return segments.map((wordsInLine) => {
     let text = "";
-    for (let i = 0; i < sorted.length; i++) {
-      const cur = sorted[i];
+    for (let i = 0; i < wordsInLine.length; i++) {
+      const cur = wordsInLine[i];
       if (i === 0) {
         text = cur.text;
         continue;
       }
-      const prev = sorted[i - 1];
+      const prev = wordsInLine[i - 1];
       const gap = cur.x0 - prev.x1;
       const h = Math.max(prev.h, cur.h);
       const prevCjk = isMostlyCjk(prev.text);
@@ -113,28 +202,23 @@ export function groupLines(words: OcrWord[]): OcrLine[] {
         text += cur.text;
       } else if (text.endsWith("-") && gap < h * 0.35) {
         text += cur.text;
-      } else if (gap > h * 0.16) {
-        if (!text.endsWith(" ")) text += " ";
-        text += cur.text;
-      } else if (!prevCjk && !curCjk && gap > h * 0.06) {
-        if (!text.endsWith(" ")) text += " ";
-        text += cur.text;
       } else {
+        if (!text.endsWith(" ")) text += " ";
         text += cur.text;
       }
     }
-    const conf = sorted.reduce((s, w) => s + w.conf, 0) / sorted.length;
+    const conf = wordsInLine.reduce((s, w) => s + w.conf, 0) / wordsInLine.length;
     const bbox: [number, number, number, number] = [
-      Math.min(...sorted.map((w) => w.x0)),
-      Math.min(...sorted.map((w) => w.y0)),
-      Math.max(...sorted.map((w) => w.x1)),
-      Math.max(...sorted.map((w) => w.y1)),
+      Math.min(...wordsInLine.map((w) => w.x0)),
+      lineY0,
+      Math.max(...wordsInLine.map((w) => w.x1)),
+      lineY1,
     ];
     return {
       text: normalizeLine(text),
       conf,
       bbox,
-      words: sorted.map((word) => ({
+      words: wordsInLine.map((word) => ({
         text: word.text,
         conf: word.conf,
         x0: word.x0,
@@ -143,9 +227,24 @@ export function groupLines(words: OcrWord[]): OcrLine[] {
         y1: word.y1,
       })),
     };
+    });
   });
 
-  return readingOrder(built.filter((l) => l.text.trim()));
+  const lines = readingOrder(built.filter((l) => l.text.trim()));
+  const blob = lines.map((line) => line.text.toLowerCase()).join("\n");
+  let y = Math.max(0, ...lines.map((line) => line.bbox[3])) + 24;
+  for (const note of peeled.notes) {
+    const key = note.toLowerCase().slice(0, 24);
+    if (key && blob.includes(key)) continue;
+    lines.push({
+      text: note,
+      conf: 90,
+      bbox: [8, y, Math.max(40, width * 0.7), y + 20],
+      words: [],
+    });
+    y += 28;
+  }
+  return lines;
 }
 
 export function readingOrder<T extends { bbox: [number, number, number, number] }>(

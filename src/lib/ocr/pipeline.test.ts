@@ -16,7 +16,7 @@ import {
   type Gray,
 } from "./image.ts";
 import { composeLayout, looksLikeMath } from "./layout.ts";
-import { groupLines, normalizeLine, readingOrder, type OcrLine } from "./reconstruct.ts";
+import { groupLines, normalizeLine, readingOrder, usefulWords, type OcrLine } from "./reconstruct.ts";
 
 function blank(w: number, h: number, value = 255): Gray {
   const d = new Uint8Array(w * h);
@@ -207,7 +207,86 @@ test("a ruled grid becomes a table and a bar stays a chart", () => {
   assert.ok(pieces.some((p) => p.kind === "image" && p.role === "graph"));
   assert.ok(pieces.some((p) => p.kind === "image" && p.role === "equation" && p.text.includes("mc^2")));
   assert.equal(looksLikeMath("E = mc^2"), true);
+  assert.equal(looksLikeMath("x2 - 6xy + 9y2"), true);
+  assert.equal(looksLikeMath("(a) x2 +9)?"), true);
   assert.equal(looksLikeMath("客戶名稱 陳大文"), false);
+  assert.equal(looksLikeMath("The daily wage of Ada is 20% higher than that of Billy"), false);
+  assert.equal(looksLikeMath("2012-DSE-MATH-CP 1-3"), false);
+});
+
+test("a wide gap keeps pieces on one baseline in left-to-right order", () => {
+  const lines = groupLines(
+    [
+      { text: "2012-DSE-MATH-CP", conf: 90, x0: 20, y0: 100, x1: 220, y1: 124 },
+      { text: "1-3", conf: 90, x0: 230, y0: 102, x1: 280, y1: 124 },
+      { text: "3", conf: 90, x0: 500, y0: 96, x1: 520, y1: 128 },
+      { text: "Go", conf: 90, x0: 700, y0: 100, x1: 740, y1: 124 },
+      { text: "on", conf: 90, x0: 748, y0: 100, x1: 780, y1: 124 },
+    ],
+    1800,
+  );
+  assert.deepEqual(
+    lines.map((line) => line.text),
+    ["2012-DSE-MATH-CP 1-3", "3", "Go on"],
+  );
+});
+
+test("a low-confidence formula is kept and a margin label stays beside it", () => {
+  const kept = usefulWords([
+    { text: "®)", conf: 0, x0: 30, y0: 40, x1: 58, y1: 68 },
+    { text: "x2-6xy+9y2", conf: 0, x0: 80, y0: 38, x1: 260, y1: 70 },
+    { text: "noise", conf: 10, x0: 400, y0: 200, x1: 460, y1: 230 },
+  ]);
+  assert.deepEqual(kept.map((w) => w.text).sort(), ["x2-6xy+9y2", "®)"].sort());
+});
+
+test("vertical margin words do not join the sentence", () => {
+  const margin = ["marked.", "be", "not", "will", "margins", "the", "in", "written", "Answers"].map((text, i) => ({
+    text,
+    conf: 96,
+    x0: 30,
+    y0: 40 + i * 36,
+    x1: 54,
+    y1: 40 + i * 36 + 32,
+  }));
+  const lines = groupLines(
+    [
+      ...margin,
+      { text: "The", conf: 95, x0: 300, y0: 250, x1: 360, y1: 280 },
+      { text: "wage", conf: 95, x0: 372, y0: 250, x1: 450, y1: 280 },
+      { text: "Answers", conf: 96, x0: 80, y0: 400, x1: 520, y1: 430 },
+      { text: "written", conf: 96, x0: 530, y0: 400, x1: 640, y1: 430 },
+      { text: "in", conf: 96, x0: 650, y0: 400, x1: 690, y1: 430 },
+      { text: "the", conf: 96, x0: 700, y0: 400, x1: 760, y1: 430 },
+      { text: "margins", conf: 96, x0: 770, y0: 400, x1: 900, y1: 430 },
+      { text: "will", conf: 96, x0: 910, y0: 400, x1: 980, y1: 430 },
+      { text: "not", conf: 96, x0: 990, y0: 400, x1: 1050, y1: 430 },
+      { text: "be", conf: 96, x0: 1060, y0: 400, x1: 1100, y1: 430 },
+      { text: "marked.", conf: 96, x0: 1110, y0: 400, x1: 1240, y1: 430 },
+    ],
+    1800,
+  );
+  const body = lines.find((line) => line.text.includes("wage"));
+  assert.equal(body?.text, "The wage");
+  assert.equal(lines.some((line) => line.text === "Answers written in the margins will not be marked."), true);
+  assert.equal(lines.filter((line) => line.text.includes("marked")).length, 1);
+});
+
+test("words on opposite margins are not a table", () => {
+  const img = blank(420, 320);
+  const row = (y: number, left: string, right: string) =>
+    wordLine(
+      [
+        { text: left, x: 16 },
+        { text: right, x: 360 },
+      ],
+      y,
+    );
+  const pieces = composeLayout(
+    [row(40, "marked.", "marked."), row(70, "be", "be"), row(100, "not", "not"), row(130, "will", "will")],
+    img,
+  );
+  assert.equal(pieces.some((piece) => piece.kind === "table"), false);
 });
 
 test("two columns are read left then right", () => {
