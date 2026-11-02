@@ -23,6 +23,26 @@ npm run dev
 
 辨識模型第一次從網上下載（約 24 MB），之後留在瀏覽器。引擎本體用頁面自帶的 LSTM 核心：部分瀏覽器會回報支援 SIMD，載入 SIMD 核心後卻在 `DotProductSSE` 直接中止。沒有網路時，模型選「快速」也一樣需要那一次下載。
 
+## 發佈到 GitHub Pages
+
+靜態網站位址是 [https://tyhcch1234.github.io/ocr](https://tyhcch1234.github.io/ocr)，對應儲存庫 `tyhcch1234/ocr`。推上 `main` 之後，GitHub Actions 會用 `/ocr` 當路徑建置並發佈。
+
+在已登入 `tyhcch1234` 的機器上：
+
+```bash
+gh auth login
+gh repo create tyhcch1234/ocr --public --source=. --remote=github --push
+```
+
+若儲存庫已經存在：
+
+```bash
+git remote add github https://github.com/tyhcch1234/ocr.git
+git push -u github main
+```
+
+到儲存庫 Settings → Pages，Source 選 GitHub Actions。免費帳號的 Pages 需要公開儲存庫。
+
 ## 檢查
 
 ```bash

@@ -1,3 +1,5 @@
+import { publicPath } from "../public-path";
+
 type StatusFn = (status: string, progress: number) => void;
 
 type TessWorker = {
@@ -38,7 +40,7 @@ function describe(status: string): string {
 /** Absolute URL so the blob worker can importScripts it. Undefined during SSR. */
 function sameOrigin(path: string): string | undefined {
   if (typeof window === "undefined") return undefined;
-  return new URL(path, window.location.href).href;
+  return new URL(publicPath(path), window.location.href).href;
 }
 
 async function spawn(lang: string, quality: ModelQuality): Promise<TessWorker> {

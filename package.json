@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev -H 0.0.0.0 -p 43123",
     "build": "next build",
+    "pages": "GITHUB_PAGES=1 NEXT_PUBLIC_BASE_PATH=/ocr next build",
     "start": "next start -H 0.0.0.0 -p 43123",
     "lint": "eslint",
     "test": "tsx --test src/lib/ocr/pipeline.test.ts",

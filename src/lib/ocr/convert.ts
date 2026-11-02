@@ -3,6 +3,7 @@ import { downscale, encodeGrayPng, rgbaToGray, type Gray } from "./image";
 import { assemblePdfText, type PdfGlyph } from "./pdf-text";
 import { ocrGray, type OcrTune } from "./recognize";
 import { prepareOffThread } from "./prepare-client";
+import { publicPath } from "../public-path";
 import { getOcrWorker, releaseOcrWorker, setOcrStatus, type ModelQuality } from "./worker";
 
 export type OcrMode = "auto" | "always" | "never";
@@ -69,7 +70,7 @@ export async function convertPdf(
   signal?: AbortSignal,
 ): Promise<PageResult[]> {
   const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+  pdfjs.GlobalWorkerOptions.workerSrc = publicPath("/pdf.worker.min.mjs");
   const data = new Uint8Array(await file.arrayBuffer());
   let pdf: Awaited<ReturnType<typeof pdfjs.getDocument>["promise"]>;
   try {

@@ -17,6 +17,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { pagesToDocx, pagesToTxt } from "@/lib/docx";
+import { publicPath } from "@/lib/public-path";
 import {
   cancelConvert,
   convertPdf,
@@ -231,7 +232,7 @@ export function Studio() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => loadSample("/samples/invoice.pdf", "invoice-scan.pdf").catch((error: Error) => setStatus(error.message))}
+                  onClick={() => loadSample(publicPath("/samples/invoice.pdf"), "invoice-scan.pdf").catch((error: Error) => setStatus(error.message))}
                 >
                   載入歪斜掃描範例
                 </Button>
@@ -239,7 +240,7 @@ export function Studio() {
                   type="button"
                   variant="ghost"
                   onClick={() =>
-                    loadSample("/samples/digital.pdf", "invoice-digital.pdf").catch((error: Error) => setStatus(error.message))
+                    loadSample(publicPath("/samples/digital.pdf"), "invoice-digital.pdf").catch((error: Error) => setStatus(error.message))
                   }
                 >
                   載入數位文字範例
