@@ -28,6 +28,8 @@ npm run dev
 
 靜態網站位址是 [https://tyhcch1234.github.io/ocr](https://tyhcch1234.github.io/ocr)，對應儲存庫 `tyhcch1234/ocr`。推上 `main` 之後，GitHub Actions 會用 `/ocr` 當路徑建置並發佈。
 
+[大澳旅遊指南](https://tyhcch1234.github.io/ocr/tai-o/)（路徑 `/tai-o`）。
+
 在已登入 `tyhcch1234` 的機器上：
 
 ```bash
